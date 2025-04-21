@@ -64,50 +64,83 @@ class PretrainedSaeConfigDiskLoader(Protocol):
         cfg_overrides: dict[str, Any] | None,
     ) -> dict[str, Any]: ...
 
-
-def sae_lens_huggingface_loader(
-    repo_id: str,
-    folder_name: str,
+def sae_lens_disk_loader(
+    path: str | Path,
     device: str = "cpu",
-    force_download: bool = False,
     cfg_overrides: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, torch.Tensor], torch.Tensor | None]:
-    """Loads SAEs from Hugging Face"""
-    cfg_dict = get_sae_lens_config_from_hf(
-        repo_id,
-        folder_name,
-        device,
-        force_download,
-        cfg_overrides,
-    )
-
-    weights_filename = f"{folder_name}/{SAE_WEIGHTS_FILENAME}"
-    sae_path = hf_hub_download(
-        repo_id=repo_id, filename=weights_filename, force_download=force_download
-    )
-
-    try:
-        sparsity_filename = f"{folder_name}/{SPARSITY_FILENAME}"
-        log_sparsity_path = hf_hub_download(
-            repo_id=repo_id, filename=sparsity_filename, force_download=force_download
-        )
-    except EntryNotFoundError:
-        log_sparsity_path = None  # no sparsity file
-
-    cfg_dict, state_dict = read_sae_components_from_disk(
-        cfg_dict=cfg_dict,
-        weight_path=sae_path,
-        device=device,
-    )
-
-    # get sparsity tensor if it exists
-    if log_sparsity_path is not None:
-        with safe_open(log_sparsity_path, framework="pt", device=device) as f:  # type: ignore
-            log_sparsity = f.get_tensor("sparsity")
+) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+    """Loads SAEs from disk"""
+    
+    # Check if the path is a file or directory
+    path = Path(path)
+    
+    # If the path is a file, get the parent directory
+    if path.is_file():
+        weights_path = path  # Use the provided path directly
+        cfg_path = path.parent / SAE_CFG_FILENAME  # Assuming the config file is in the same directory
     else:
-        log_sparsity = None
+        weights_path = path / SAE_WEIGHTS_FILENAME
+        cfg_path = path / SAE_CFG_FILENAME
 
-    return cfg_dict, state_dict, log_sparsity
+    # Load the configuration from the specified config file
+    if not cfg_path.is_file():
+        raise FileNotFoundError(f"Configuration file not found at: {cfg_path}")
+
+    with open(cfg_path) as f:
+        cfg_dict = json.load(f)
+
+    # Load the state dict from the weights file
+    state_dict = {}
+    with safe_open(weights_path, framework="pt", device=device) as f:  # type: ignore
+        for k in f.keys():
+            state_dict[k] = f.get_tensor(k).to(dtype=DTYPE_MAP[cfg_dict["dtype"]])
+
+    return cfg_dict, state_dict
+
+
+# def sae_lens_huggingface_loader(
+#     repo_id: str,
+#     folder_name: str,
+#     device: str = "cpu",
+#     force_download: bool = False,
+#     cfg_overrides: dict[str, Any] | None = None,
+# ) -> tuple[dict[str, Any], dict[str, torch.Tensor], torch.Tensor | None]:
+#     """Loads SAEs from Hugging Face"""
+#     cfg_dict = get_sae_lens_config_from_hf(
+#         repo_id,
+#         folder_name,
+#         device,
+#         force_download,
+#         cfg_overrides,
+#     )
+
+#     weights_filename = f"{folder_name}/{SAE_WEIGHTS_FILENAME}"
+#     sae_path = hf_hub_download(
+#         repo_id=repo_id, filename=weights_filename, force_download=force_download
+#     )
+
+#     try:
+#         sparsity_filename = f"{folder_name}/{SPARSITY_FILENAME}"
+#         log_sparsity_path = hf_hub_download(
+#             repo_id=repo_id, filename=sparsity_filename, force_download=force_download
+#         )
+#     except EntryNotFoundError:
+#         log_sparsity_path = None  # no sparsity file
+
+#     cfg_dict, state_dict = read_sae_components_from_disk(
+#         cfg_dict=cfg_dict,
+#         weight_path=sae_path,
+#         device=device,
+#     )
+
+#     # get sparsity tensor if it exists
+#     if log_sparsity_path is not None:
+#         with safe_open(log_sparsity_path, framework="pt", device=device) as f:  # type: ignore
+#             log_sparsity = f.get_tensor("sparsity")
+#     else:
+#         log_sparsity = None
+
+#     return cfg_dict, state_dict, log_sparsity
 
 
 def sae_lens_disk_loader(
